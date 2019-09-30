@@ -420,6 +420,10 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 			requestIDvalid = true
 		}
 	}
+	// RequestID is empty for an IdP initiated flow
+	if resp.InResponseTo == "" && len(possibleRequestIDs) == 0 {
+		requestIDvalid = true
+	}
 	if !requestIDvalid {
 		retErr.PrivateErr = fmt.Errorf("`InResponseTo` does not match any of the possible request IDs (expected %v)", possibleRequestIDs)
 		return nil, retErr

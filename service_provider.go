@@ -536,6 +536,10 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 				break
 			}
 		}
+		// allow empty InResponseTo for an IdP initiated flow
+		if subjectConfirmation.SubjectConfirmationData.InResponseTo == "" && len(possibleRequestIDs) == 0 {
+			requestIDvalid = true
+		}
 		if !requestIDvalid {
 			return fmt.Errorf("SubjectConfirmation one of the possible request IDs (%v)", possibleRequestIDs)
 		}

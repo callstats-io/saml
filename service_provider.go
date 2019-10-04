@@ -65,7 +65,7 @@ type ServiceProvider struct {
 	AcsURL url.URL
 
 	// IDPMetadata is the metadata from the identity provider.
-	IDPMetadata *EntityDescriptor
+	IDPMetadata *[]EntityDescriptor
 
 	// AuthnNameIDFormat is the format used in the NameIDPolicy for
 	// authentication requests
@@ -195,10 +195,12 @@ func (req *AuthnRequest) Redirect(relayState string) *url.URL {
 // GetSSOBindingLocation returns URL for the IDP's Single Sign On Service binding
 // of the specified type (HTTPRedirectBinding or HTTPPostBinding)
 func (sp *ServiceProvider) GetSSOBindingLocation(binding string) string {
-	for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
-		for _, singleSignOnService := range idpSSODescriptor.SingleSignOnServices {
-			if singleSignOnService.Binding == binding {
-				return singleSignOnService.Location
+	for _, m := range sp.IDPMetadata {
+		for _, idpSSODescriptor := range m.IDPSSODescriptors {
+			for _, singleSignOnService := range idpSSODescriptor.SingleSignOnServices {
+				if singleSignOnService.Binding == binding {
+					return singleSignOnService.Location
+				}
 			}
 		}
 	}
@@ -207,9 +209,9 @@ func (sp *ServiceProvider) GetSSOBindingLocation(binding string) string {
 
 // getIDPSigningCerts returns the certificates which we can use to verify things
 // signed by the IDP in PEM format, or nil if no such certificate is found.
-func (sp *ServiceProvider) getIDPSigningCerts() ([]*x509.Certificate, error) {
+func (sp *ServiceProvider) getIDPSigningCerts(idp *EntityDescriptor) ([]*x509.Certificate, error) {
 	var certStrs []string
-	for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
+	for _, idpSSODescriptor := range idp.IDPSSODescriptors {
 		for _, keyDescriptor := range idpSSODescriptor.KeyDescriptors {
 			if keyDescriptor.Use == "signing" {
 				certStrs = append(certStrs, keyDescriptor.KeyInfo.Certificate)
@@ -220,7 +222,7 @@ func (sp *ServiceProvider) getIDPSigningCerts() ([]*x509.Certificate, error) {
 	// If there are no explicitly signing certs, just return the first
 	// non-empty cert we find.
 	if len(certStrs) == 0 {
-		for _, idpSSODescriptor := range sp.IDPMetadata.IDPSSODescriptors {
+		for _, idpSSODescriptor := range idp.IDPSSODescriptors {
 			for _, keyDescriptor := range idpSSODescriptor.KeyDescriptors {
 				if keyDescriptor.Use == "" && keyDescriptor.KeyInfo.Certificate != "" {
 					certStrs = append(certStrs, keyDescriptor.KeyInfo.Certificate)
@@ -378,6 +380,17 @@ func (ivr *InvalidResponseError) Error() string {
 	return fmt.Sprintf("Authentication failed")
 }
 
+func (sp *ServiceProvider) findIDPByEntityID(EntityID string) *EntityDescriptor {
+	fmt.Println("findIdPByEntityID >", EntityID)
+
+	for _, v := range sp.IDPMetadata {
+		if v.EntityID == EntityID {
+			fmt.Println("findIdPByEntityID >", v)
+			return v
+		}
+	}
+}
+
 // ParseResponse extracts the SAML IDP response received in req, validates
 // it, and returns the verified attributes of the request.
 //
@@ -433,10 +446,16 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 		retErr.PrivateErr = fmt.Errorf("IssueInstant expired at %s", resp.IssueInstant.Add(MaxIssueDelay))
 		return nil, retErr
 	}
-	if resp.Issuer.Value != sp.IDPMetadata.EntityID {
+
+	idp := sp.findIDPByEntityID(resp.Issuer.Value)
+	if idp == nil {
 		retErr.PrivateErr = fmt.Errorf("Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID)
 		return nil, retErr
 	}
+	//if resp.Issuer.Value != sp.IDPMetadata.EntityID {
+	//	retErr.PrivateErr = fmt.Errorf("Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID)
+	//	return nil, retErr
+	//}
 	if resp.Status.StatusCode.Value != StatusSuccess {
 		retErr.PrivateErr = fmt.Errorf("Status code was not %s", StatusSuccess)
 		return nil, retErr
@@ -497,7 +516,7 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 			return nil, retErr
 		}
 
-		if err := sp.validateSigned(doc.Root()); err != nil {
+		if err := sp.validateSigned(doc.Root(), idp); err != nil {
 			retErr.PrivateErr = err
 			return nil, retErr
 		}
@@ -599,7 +618,7 @@ func findChild(parentEl *etree.Element, childNS string, childTag string) (*etree
 
 // validateSigned returns a nil error iff each of the signatures on the Response and Assertion elements
 // are valid and there is at least one signature.
-func (sp *ServiceProvider) validateSigned(responseEl *etree.Element) error {
+func (sp *ServiceProvider) validateSigned(responseEl *etree.Element, idp *EntityDescriptor) error {
 	haveSignature := false
 
 	// Some SAML responses have the signature on the Response object, and some on the Assertion
@@ -610,7 +629,7 @@ func (sp *ServiceProvider) validateSigned(responseEl *etree.Element) error {
 		return err
 	}
 	if sigEl != nil {
-		if err = sp.validateSignature(responseEl); err != nil {
+		if err = sp.validateSignature(responseEl, idp); err != nil {
 			return fmt.Errorf("cannot validate signature on Response: %v", err)
 		}
 		haveSignature = true
@@ -640,8 +659,8 @@ func (sp *ServiceProvider) validateSigned(responseEl *etree.Element) error {
 }
 
 // validateSignature returns nill iff the Signature embedded in the element is valid
-func (sp *ServiceProvider) validateSignature(el *etree.Element) error {
-	certs, err := sp.getIDPSigningCerts()
+func (sp *ServiceProvider) validateSignature(el *etree.Element, idp *EntityDescriptor) error {
+	certs, err := sp.getIDPSigningCerts(idp)
 	if err != nil {
 		return err
 	}

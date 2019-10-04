@@ -65,7 +65,7 @@ type ServiceProvider struct {
 	AcsURL url.URL
 
 	// IDPMetadata is the metadata from the identity provider.
-	IDPMetadata *[]EntityDescriptor
+	IDPMetadata []EntityDescriptor
 
 	// AuthnNameIDFormat is the format used in the NameIDPolicy for
 	// authentication requests
@@ -386,9 +386,10 @@ func (sp *ServiceProvider) findIDPByEntityID(EntityID string) *EntityDescriptor 
 	for _, v := range sp.IDPMetadata {
 		if v.EntityID == EntityID {
 			fmt.Println("findIdPByEntityID >", v)
-			return v
+			return &v
 		}
 	}
+	return nil
 }
 
 // ParseResponse extracts the SAML IDP response received in req, validates
@@ -449,13 +450,9 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 
 	idp := sp.findIDPByEntityID(resp.Issuer.Value)
 	if idp == nil {
-		retErr.PrivateErr = fmt.Errorf("Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID)
+		retErr.PrivateErr = fmt.Errorf("Issuer does not match any IDP metadata")
 		return nil, retErr
 	}
-	//if resp.Issuer.Value != sp.IDPMetadata.EntityID {
-	//	retErr.PrivateErr = fmt.Errorf("Issuer does not match the IDP metadata (expected %q)", sp.IDPMetadata.EntityID)
-	//	return nil, retErr
-	//}
 	if resp.Status.StatusCode.Value != StatusSuccess {
 		retErr.PrivateErr = fmt.Errorf("Status code was not %s", StatusSuccess)
 		return nil, retErr
@@ -477,7 +474,7 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 			return nil, retErr
 		}
 
-		if err = sp.validateSigned(responseEl); err != nil {
+		if err = sp.validateSigned(responseEl, idp); err != nil {
 			retErr.PrivateErr = err
 			return nil, retErr
 		}
@@ -528,7 +525,7 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 		}
 	}
 
-	if err := sp.validateAssertion(assertion, possibleRequestIDs, now); err != nil {
+	if err := sp.validateAssertion(assertion, possibleRequestIDs, now, idp); err != nil {
 		retErr.PrivateErr = fmt.Errorf("assertion invalid: %s", err)
 		return nil, retErr
 	}
@@ -540,12 +537,12 @@ func (sp *ServiceProvider) ParseResponse(req *http.Request, possibleRequestIDs [
 // the requirements to accept. If validation fails, it returns an error describing
 // the failure. (The digital signature on the assertion is not checked -- this
 // should be done before calling this function).
-func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleRequestIDs []string, now time.Time) error {
+func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleRequestIDs []string, now time.Time, idp *EntityDescriptor) error {
 	if assertion.IssueInstant.Add(MaxIssueDelay).Before(now) {
 		return fmt.Errorf("expired on %s", assertion.IssueInstant.Add(MaxIssueDelay))
 	}
-	if assertion.Issuer.Value != sp.IDPMetadata.EntityID {
-		return fmt.Errorf("issuer is not %q", sp.IDPMetadata.EntityID)
+	if assertion.Issuer.Value != idp.EntityID {
+		return fmt.Errorf("issuer is not %q", idp.EntityID)
 	}
 	for _, subjectConfirmation := range assertion.Subject.SubjectConfirmations {
 		requestIDvalid := false
@@ -645,7 +642,7 @@ func (sp *ServiceProvider) validateSigned(responseEl *etree.Element, idp *Entity
 			return err
 		}
 		if sigEl != nil {
-			if err = sp.validateSignature(assertionEl); err != nil {
+			if err = sp.validateSignature(assertionEl, idp); err != nil {
 				return fmt.Errorf("cannot validate signature on Response: %v", err)
 			}
 			haveSignature = true

@@ -381,11 +381,8 @@ func (ivr *InvalidResponseError) Error() string {
 }
 
 func (sp *ServiceProvider) findIDPByEntityID(EntityID string) *EntityDescriptor {
-	fmt.Println("findIdPByEntityID >", EntityID)
-
 	for _, v := range sp.IDPMetadata {
 		if v.EntityID == EntityID {
-			fmt.Println("findIdPByEntityID >", v)
 			return &v
 		}
 	}

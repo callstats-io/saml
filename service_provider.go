@@ -56,6 +56,10 @@ type ServiceProvider struct {
 	// Certificate is the RSA public part of Key.
 	Certificate *x509.Certificate
 
+	// Audience specifies who (and only who) the assertion is intended for. Can be an URL / hostname
+	// If it's nil, then some other URL is used during assertion validation
+	Audience *url.URL
+
 	// MetadataURL is the full URL to the metadata endpoint on this host,
 	// i.e. https://example.com/saml/metadata
 	MetadataURL url.URL
@@ -572,6 +576,11 @@ func (sp *ServiceProvider) validateAssertion(assertion *Assertion, possibleReque
 
 	audienceRestrictionsValid := len(assertion.Conditions.AudienceRestrictions) == 0
 	for _, audienceRestriction := range assertion.Conditions.AudienceRestrictions {
+		if sp.Audience != nil {
+			if audienceRestriction.Audience.Value == sp.Audience.String() {
+				audienceRestrictionsValid = true
+			}
+		}
 		if audienceRestriction.Audience.Value == sp.MetadataURL.String() {
 			audienceRestrictionsValid = true
 		}
